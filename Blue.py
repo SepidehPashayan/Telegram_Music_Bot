@@ -1,6 +1,4 @@
 from telegram import Update
-import requests
-from urllib.parse import quote
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -11,11 +9,20 @@ from telegram.ext import (
 
 from dotenv import load_dotenv
 import os
+import requests
+
+# =========================
+# ENV
+# =========================
 
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
+GENIUS_TOKEN = os.getenv("GENIUS_TOKEN")
 
+# =========================
+# START
+# =========================
 
 async def start(
     update: Update,
@@ -26,76 +33,99 @@ async def start(
         "یه تیکه از متن آهنگ رو برام بفرست."
     )
 
+# =========================
+# GENIUS SEARCH
+# =========================
+
 def search_song(query):
-    url = "https://itunes.apple.com/search"
+
+    url = "https://api.genius.com/search"
+
+    headers = {
+        "Authorization": f"Bearer {GENIUS_TOKEN}"
+    }
 
     params = {
-        "term": query,
-        "entity": "song",
-        "limit": 1
+        "q": query
     }
 
-    response = requests.get(url, params=params)
-    data = response.json()
+    try:
+        response = requests.get(
+            url,
+            headers=headers,
+            params=params,
+            timeout=10
+        )
 
-    if data["resultCount"] == 0:
+        print("Status Code:", response.status_code)
+
+        data = response.json()
+
+        print(data)
+
+        hits = data["response"]["hits"]
+
+        if len(hits) == 0:
+            return None
+
+        song = hits[0]["result"]
+
+        return {
+            "title": song["title"],
+            "artist": song["primary_artist"]["name"],
+            "url": song["url"],
+            "image": song["song_art_image_url"]
+        }
+
+    except Exception as e:
+        print("ERROR:", e)
         return None
 
-    song = data["results"][0]
-
-    return {
-        "title": song["trackName"],
-        "artist": song["artistName"],
-        "album": song["collectionName"],
-        "cover": song["artworkUrl100"]
-    }
+# =========================
+# MESSAGE HANDLER
+# =========================
 
 async def handle_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     text = update.message.text
+
+    print("User Message:", text)
 
     result = search_song(text)
 
-    if not result:
+    print("Result:", result)
+
+    if result is None:
         await update.message.reply_text(
             "آهنگی پیدا نشد 😔"
         )
         return
 
-    title = result["title"]
-    artist = result["artist"]
-    album = result["album"]
-
-    youtube_link = (
-        f"https://www.youtube.com/results?"
-        f"search_query={quote(artist + ' ' + title)}"
-    )
-
-    google_link = (
-        f"https://www.google.com/search?"
-        f"q={quote(artist + ' ' + title)}"
-    )
-
     message = (
-        f"🎵 {title}\n"
-        f"🎤 {artist}\n"
-        f"💿 {album}\n\n"
-        f"▶️ YouTube:\n{youtube_link}\n\n"
-        f"🔍 Google:\n{google_link}"
+        f"🎵 {result['title']}\n"
+        f"🎤 {result['artist']}\n\n"
+        f"🔗 {result['url']}"
     )
 
     await update.message.reply_photo(
-        photo=result["cover"],
+        photo=result["image"],
         caption=message
     )
 
+# =========================
+# APP
+# =========================
 
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(
-    CommandHandler("start", start)
+    CommandHandler(
+        "start",
+        start
+    )
 )
 
 app.add_handler(
