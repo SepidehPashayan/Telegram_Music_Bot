@@ -1,4 +1,5 @@
 from telegram import Update
+from urllib.parse import quote
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -95,6 +96,22 @@ async def handle_message(
     print("User Message:", text)
 
     result = search_song(text)
+    
+    title = result["title"]
+    artist = result["artist"]
+
+    youtube_link = (
+        f"https://www.youtube.com/results?"
+        f"search_query={quote(artist + ' ' + title)}"
+    )
+    google_link = (
+    f"https://www.google.com/search?"
+    f"q={quote(artist + ' ' + title)}"
+    )
+    spotify_link = (
+    f"https://open.spotify.com/search/"
+    f"{quote(artist + ' ' + title)}"
+    )
 
     print("Result:", result)
 
@@ -105,9 +122,20 @@ async def handle_message(
         return
 
     message = (
-        f"🎵 {result['title']}\n"
-        f"🎤 {result['artist']}\n\n"
-        f"🔗 {result['url']}"
+    f"🎵 {title}\n"
+    f"🎤 {artist}\n\n"
+
+    f"🎼 Genius:\n"
+    f"{result['url']}\n\n"
+
+    f"▶️ YouTube:\n"
+    f"{youtube_link}\n\n"
+
+    f"🎧 Spotify:\n"
+    f"{spotify_link}\n\n"
+
+    f"🔍 Google:\n"
+    f"{google_link}"
     )
 
     await update.message.reply_photo(
