@@ -12,31 +12,22 @@ from dotenv import load_dotenv
 import os
 import requests
 
-# =========================
-# ENV
-# =========================
 
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
 GENIUS_TOKEN = os.getenv("GENIUS_TOKEN")
 
-# =========================
-# START
-# =========================
 
 async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
     await update.message.reply_text(
-        "سلام 🌸\n"
-        "یه تیکه از متن آهنگ رو برام بفرست."
+        "درود دوست قشنگم💙\n"
+        "لطفا یه تیکه از اهنگی که توی ذهنت هست رو برام بفرست"
     )
 
-# =========================
-# GENIUS SEARCH
-# =========================
 
 def search_song(query):
 
@@ -51,6 +42,7 @@ def search_song(query):
     }
 
     try:
+
         response = requests.get(
             url,
             headers=headers,
@@ -58,15 +50,11 @@ def search_song(query):
             timeout=10
         )
 
-        print("Status Code:", response.status_code)
-
         data = response.json()
-
-        print(data)
 
         hits = data["response"]["hits"]
 
-        if len(hits) == 0:
+        if not hits:
             return None
 
         song = hits[0]["result"]
@@ -75,16 +63,34 @@ def search_song(query):
             "title": song["title"],
             "artist": song["primary_artist"]["name"],
             "url": song["url"],
-            "image": song["song_art_image_url"]
+            "image": song["song_art_image_url"],
+
+            "release_date":
+                song.get(
+                    "release_date_for_display",
+                    "نامشخص"
+                ),
+
+            "pageviews":
+                song["stats"].get(
+                    "pageviews",
+                    "نامشخص"
+                ),
+
+            "annotations":
+                song.get(
+                    "annotation_count",
+                    "نامشخص"
+                ),
+
+            "artist_url":
+                song["primary_artist"]["url"]
         }
 
     except Exception as e:
         print("ERROR:", e)
         return None
 
-# =========================
-# MESSAGE HANDLER
-# =========================
 
 async def handle_message(
     update: Update,
@@ -93,10 +99,16 @@ async def handle_message(
 
     text = update.message.text
 
-    print("User Message:", text)
-
     result = search_song(text)
-    
+
+    if result is None:
+
+        await update.message.reply_text(
+            "آهنگی پیدا نشد 😔"
+        )
+
+        return
+
     title = result["title"]
     artist = result["artist"]
 
@@ -104,48 +116,53 @@ async def handle_message(
         f"https://www.youtube.com/results?"
         f"search_query={quote(artist + ' ' + title)}"
     )
+
     google_link = (
-    f"https://www.google.com/search?"
-    f"q={quote(artist + ' ' + title)}"
+        f"https://www.google.com/search?"
+        f"q={quote(artist + ' ' + title)}"
     )
+
     spotify_link = (
-    f"https://open.spotify.com/search/"
-    f"{quote(artist + ' ' + title)}"
+        f"https://open.spotify.com/search/"
+        f"{quote(artist + ' ' + title)}"
     )
 
-    print("Result:", result)
+    pageviews = result["pageviews"]
 
-    if result is None:
-        await update.message.reply_text(
-            "آهنگی پیدا نشد 😔"
-        )
-        return
+    if isinstance(pageviews, int):
+        pageviews = f"{pageviews:,}"
 
     message = (
-    f"🎵 {title}\n"
-    f"🎤 {artist}\n\n"
 
-    f"🎼 Genius:\n"
-    f"{result['url']}\n\n"
+        f"🎵 {title}\n"
+        f"🎤 {artist}\n\n"
 
-    f"▶️ YouTube:\n"
-    f"{youtube_link}\n\n"
+        f"📅 Release Date:\n"
+        f"{result['release_date']}\n\n"
 
-    f"🎧 Spotify:\n"
-    f"{spotify_link}\n\n"
+        f"👀 Genius Views:\n"
+        f"{pageviews}\n\n"
 
-    f"🔍 Google:\n"
-    f"{google_link}"
+        f"📝 Annotations:\n"
+        f"{result['annotations']}\n\n"
+
+        f"🎼 Genius:\n"
+        f"{result['url']}\n\n"
+
+        f"🎧 Spotify:\n"
+        f"{spotify_link}\n\n"
+
+        f"▶️ YouTube:\n"
+        f"{youtube_link}\n\n"
+
+        f"🔍 Google:\n"
+        f"{google_link}"
     )
 
     await update.message.reply_photo(
         photo=result["image"],
         caption=message
     )
-
-# =========================
-# APP
-# =========================
 
 app = ApplicationBuilder().token(TOKEN).build()
 
