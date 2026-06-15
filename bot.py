@@ -12,7 +12,6 @@ import os
 import requests
 import base64
 import time
-import yt_dlp
 
 load_dotenv()
 
@@ -42,6 +41,12 @@ def get_spotify_token():
             data={"grant_type": "client_credentials"},
             timeout=10,
         )
+        print(f"Spotify token status: {resp.status_code}")
+        print(f"Spotify token response: {resp.text[:200]}")
+
+        if resp.status_code != 200:
+            return None
+
         data = resp.json()
         _spotify_cache["token"] = data["access_token"]
         _spotify_cache["expires_at"] = time.time() + data.get("expires_in", 3600) - 60
@@ -54,16 +59,21 @@ def get_spotify_token():
 def search_spotify(query):
     token = get_spotify_token()
     if not token:
+        print("No Spotify token available")
         return None
 
     try:
-        # جستجوی آهنگ
         resp = requests.get(
             "https://api.spotify.com/v1/search",
             headers={"Authorization": f"Bearer {token}"},
             params={"q": query, "type": "track", "limit": 1},
             timeout=10,
         )
+        print(f"Spotify search status: {resp.status_code}")
+
+        if resp.status_code != 200:
+            return None
+
         tracks = resp.json().get("tracks", {}).get("items", [])
         if not tracks:
             return None
@@ -71,31 +81,27 @@ def search_spotify(query):
         track = tracks[0]
         album = track["album"]
         duration_sec = track["duration_ms"] // 1000
-        track_id = track["id"]
         album_id = album["id"]
+        artist_id = track["artists"][0]["id"]
 
-        # اطلاعات کامل‌تر آلبوم
+        # اطلاعات آلبوم
         album_resp = requests.get(
             f"https://api.spotify.com/v1/albums/{album_id}",
             headers={"Authorization": f"Bearer {token}"},
             timeout=10,
         )
-        album_data = album_resp.json()
-        genres = album_data.get("genres", [])
-        label = album_data.get("label", "نامشخص")
-        total_tracks = album_data.get("total_tracks", "نامشخص")
+        album_data = album_resp.json() if album_resp.status_code == 200 else {}
 
         # اطلاعات خواننده
-        artist_id = track["artists"][0]["id"]
         artist_resp = requests.get(
             f"https://api.spotify.com/v1/artists/{artist_id}",
             headers={"Authorization": f"Bearer {token}"},
             timeout=10,
         )
-        artist_data = artist_resp.json()
-        artist_genres = artist_data.get("genres", [])
+        artist_data = artist_resp.json() if artist_resp.status_code == 200 else {}
+
+        genres = album_data.get("genres", []) or artist_data.get("genres", [])
         artist_followers = artist_data.get("followers", {}).get("total", 0)
-        artist_popularity = artist_data.get("popularity", 0)
 
         return {
             "title": track["name"],
@@ -109,16 +115,35 @@ def search_spotify(query):
             "popularity": track["popularity"],
             "explicit": track.get("explicit", False),
             "track_number": track.get("track_number", "نامشخص"),
-            "total_tracks": total_tracks,
-            "disc_number": track.get("disc_number", 1),
+            "total_tracks": album_data.get("total_tracks", "نامشخص"),
+            "label": album_data.get("label", "نامشخص"),
+            "genres": genres,
             "isrc": track.get("external_ids", {}).get("isrc", "نامشخص"),
-            "label": label,
-            "genres": genres if genres else artist_genres,
             "artist_followers": f"{artist_followers:,}",
-            "artist_popularity": artist_popularity,
+            "artist_popularity": artist_data.get("popularity", 0),
         }
     except Exception as e:
         print(f"Spotify search error: {e}")
+        return None
+
+
+def search_deezer(artist, title):
+    """جستجو در Deezer برای گرفتن preview 30 ثانیه‌ای"""
+    try:
+        resp = requests.get(
+            "https://api.deezer.com/search",
+            params={"q": f"{artist} {title}", "limit": 1},
+            timeout=10,
+        )
+        data = resp.json()
+        items = data.get("data", [])
+        if not items:
+            return None
+
+        track = items[0]
+        return track.get("preview")  # لینک mp3 30 ثانیه‌ای
+    except Exception as e:
+        print(f"Deezer error: {e}")
         return None
 
 
@@ -144,38 +169,9 @@ def search_genius(query):
             "release_date": song.get("release_date_for_display", "نامشخص"),
             "pageviews": song["stats"].get("pageviews", "نامشخص"),
             "annotations": song.get("annotation_count", "نامشخص"),
-            "artist_url": song["primary_artist"]["url"]
         }
     except Exception as e:
         print("ERROR:", e)
-        return None
-
-
-def download_audio_youtube(artist, title):
-    """دانلود فایل صوتی از یوتیوب"""
-    query = f"{artist} {title} official audio"
-    output_path = f"/tmp/{artist}_{title}".replace(" ", "_")[:50]
-
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": output_path + ".%(ext)s",
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "128",
-        }],
-        "quiet": True,
-        "no_warnings": True,
-        "default_search": "ytsearch1",
-        "max_filesize": 45 * 1024 * 1024,  # حداکثر ۴۵ مگ (تلگرام ۵۰ مگ قبول می‌کنه)
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([query])
-        return output_path + ".mp3"
-    except Exception as e:
-        print(f"YouTube download error: {e}")
         return None
 
 
@@ -189,9 +185,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    # جستجو در Genius
     genius_result = search_genius(text)
-
     if genius_result is None:
         await update.message.reply_text("آهنگی پیدا نشد 😔")
         return
@@ -199,17 +193,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     title = genius_result["title"]
     artist = genius_result["artist"]
 
-    # جستجو در Spotify
     spotify_result = search_spotify(f"{artist} {title}")
 
-    youtube_link = (
-        f"https://www.youtube.com/results?"
-        f"search_query={quote(artist + ' ' + title)}"
-    )
-    google_link = (
-        f"https://www.google.com/search?"
-        f"q={quote(artist + ' ' + title)}"
-    )
+    youtube_link = f"https://www.youtube.com/results?search_query={quote(artist + ' ' + title)}"
+    google_link = f"https://www.google.com/search?q={quote(artist + ' ' + title)}"
 
     pageviews = genius_result["pageviews"]
     if isinstance(pageviews, int):
@@ -218,7 +205,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if spotify_result:
         spotify_link = spotify_result["spotify_url"]
         cover_image = spotify_result["image"] or genius_result["image"]
-
         explicit_tag = "🔞 Explicit" if spotify_result["explicit"] else "✅ Clean"
         genres_text = ", ".join(spotify_result["genres"][:3]) if spotify_result["genres"] else "نامشخص"
         popularity_bar = "🟩" * (spotify_result["popularity"] // 20) + "⬜" * (5 - spotify_result["popularity"] // 20)
@@ -227,7 +213,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = (
             f"🎵 {title}\n"
             f"🎤 {artist}\n\n"
-            f"━━━━━━ 🟢 Spotify Info ━━━━━━\n"
+            f"━━━━ 🟢 Spotify Info ━━━━\n"
             f"💿 آلبوم: {spotify_result['album']}\n"
             f"📀 نوع: {spotify_result['album_type']}\n"
             f"🎼 ترک: {spotify_result['track_number']} از {spotify_result['total_tracks']}\n"
@@ -240,11 +226,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 محبوبیت خواننده: {artist_pop_bar} ({spotify_result['artist_popularity']}/100)\n"
             f"👥 فالوور خواننده: {spotify_result['artist_followers']}\n"
             f"🆔 ISRC: {spotify_result['isrc']}\n\n"
-            f"━━━━━━ 📖 Genius Info ━━━━━━\n"
+            f"━━━━ 📖 Genius Info ━━━━\n"
             f"📅 انتشار: {genius_result['release_date']}\n"
             f"👀 بازدید: {pageviews}\n"
             f"📝 توضیحات: {genius_result['annotations']}\n\n"
-            f"━━━━━━ 🔗 Links ━━━━━━\n"
+            f"━━━━ 🔗 Links ━━━━\n"
             f"🎧 Spotify:\n{spotify_link}\n\n"
             f"🎼 Genius:\n{genius_result['url']}\n\n"
             f"▶️ YouTube:\n{youtube_link}\n\n"
@@ -253,57 +239,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         cover_image = genius_result["image"]
         spotify_link = f"https://open.spotify.com/search/{quote(artist + ' ' + title)}"
-
         message = (
             f"🎵 {title}\n"
             f"🎤 {artist}\n\n"
-            f"📅 Release Date:\n"
-            f"{genius_result['release_date']}\n\n"
-            f"👀 Genius Views:\n"
-            f"{pageviews}\n\n"
-            f"📝 Annotations:\n"
-            f"{genius_result['annotations']}\n\n"
-            f"🎼 Genius:\n"
-            f"{genius_result['url']}\n\n"
-            f"🎧 Spotify:\n"
-            f"{spotify_link}\n\n"
-            f"▶️ YouTube:\n"
-            f"{youtube_link}\n\n"
-            f"🔍 Google:\n"
-            f"{google_link}"
+            f"📅 Release Date: {genius_result['release_date']}\n"
+            f"👀 Genius Views: {pageviews}\n"
+            f"📝 Annotations: {genius_result['annotations']}\n\n"
+            f"🎼 Genius:\n{genius_result['url']}\n\n"
+            f"🎧 Spotify:\n{spotify_link}\n\n"
+            f"▶️ YouTube:\n{youtube_link}\n\n"
+            f"🔍 Google:\n{google_link}"
         )
 
-    await update.message.reply_photo(
-        photo=cover_image,
-        caption=message
-    )
+    await update.message.reply_photo(photo=cover_image, caption=message)
 
-    # دانلود و ارسال فایل صوتی از یوتیوب
-    await update.message.reply_text("🎵 دارم فایل صوتی رو دانلود می‌کنم...")
-    audio_path = download_audio_youtube(artist, title)
-
-    if audio_path and os.path.exists(audio_path):
-        with open(audio_path, "rb") as audio_file:
-            await update.message.reply_audio(
-                audio=audio_file,
-                title=title,
-                performer=artist,
-                caption="🎧 فایل صوتی آهنگ"
-            )
-        os.remove(audio_path)
+    # پیش‌نمایش صوتی از Deezer
+    preview_url = search_deezer(artist, title)
+    if preview_url:
+        await update.message.reply_audio(
+            audio=preview_url,
+            title=title,
+            performer=artist,
+            caption="🎧 پیش‌نمایش ۳۰ ثانیه‌ای (Deezer)"
+        )
     else:
-        await update.message.reply_text("⚠️ دانلود فایل صوتی موفق نبود.")
+        await update.message.reply_text("⚠️ پیش‌نمایش صوتی موجود نیست.")
 
 
 app = ApplicationBuilder().token(TOKEN).build()
-
 app.add_handler(CommandHandler("start", start))
-app.add_handler(
-    MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
-        handle_message
-    )
-)
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 print("Bot is running...")
 app.run_polling()
