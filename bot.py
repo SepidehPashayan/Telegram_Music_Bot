@@ -20,7 +20,7 @@ GENIUS_TOKEN = os.getenv("GENIUS_TOKEN")
 
 
 def search_deezer_multi(query, limit=5):
-    """جستجو در Deezer و برگردوندن چند نتیجه"""
+
     try:
         resp = requests.get(
             "https://api.deezer.com/search",
@@ -42,7 +42,6 @@ def search_deezer_multi(query, limit=5):
 
 
 def search_genius_multi(query, limit=5):
-    """جستجو در Genius و برگردوندن چند نتیجه"""
     try:
         response = requests.get(
             "https://api.genius.com/search",
@@ -65,7 +64,6 @@ def search_genius_multi(query, limit=5):
 
 
 def get_deezer_track(track_id):
-    """گرفتن اطلاعات کامل یه ترک از Deezer"""
     try:
         t = requests.get(f"https://api.deezer.com/track/{track_id}", timeout=10).json()
         album_id = t["album"]["id"]
@@ -103,7 +101,7 @@ def get_deezer_track(track_id):
 
 
 def get_genius_info(title, artist):
-    """گرفتن اطلاعات Genius برای یه آهنگ مشخص"""
+
     try:
         response = requests.get(
             "https://api.genius.com/search",
@@ -193,11 +191,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    # جستجوی چندتایی از Deezer و Genius
+
     deezer_results = search_deezer_multi(text, limit=5)
     genius_results = search_genius_multi(text, limit=5)
 
-    # ترکیب نتایج و حذف تکراری‌ها
     seen = set()
     combined = []
 
@@ -218,14 +215,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not combined:
         await update.message.reply_text(
             "😔 آهنگی پیدا نشد.\n"
-            "سعی کن اسم دقیق‌تری بنویسی یا چند کلمه از متن آهنگ بفرستی."
+            "سعی کن اسم دقیق‌تری بنویسی یا چند کلمه از متن آهنگ رو بفرستی."
         )
         return
 
-    # ذخیره نتایج در context برای استفاده بعدی
+
     context.user_data["search_results"] = combined
 
-    # ساخت دکمه‌های انتخاب
     keyboard = []
     for i, item in enumerate(combined):
         label = f"🎵 {item['title']} — {item['artist']}"
@@ -255,18 +251,16 @@ async def handle_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.message.reply_text("⏳ دارم اطلاعات کامل رو می‌گیرم...")
 
-    # گرفتن اطلاعات کامل Deezer
     if selected["source"] == "deezer" and selected["id"]:
         deezer_result = get_deezer_track(selected["id"])
     else:
-        # جستجوی مستقیم در Deezer با اسم آهنگ
+
         hits = search_deezer_multi(f"{artist} {title}", limit=1)
         if hits:
             deezer_result = get_deezer_track(hits[0]["id"])
         else:
             deezer_result = None
 
-    # گرفتن اطلاعات Genius
     genius_result = get_genius_info(title, artist)
 
     youtube_link = f"https://www.youtube.com/results?search_query={quote(artist + ' ' + title)}"
@@ -284,7 +278,6 @@ async def handle_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.message.reply_text(message)
 
-    # ارسال پیش‌نمایش ۳۰ ثانیه‌ای
     if deezer_result and deezer_result.get("preview_url"):
         await query.message.reply_audio(
             audio=deezer_result["preview_url"],
